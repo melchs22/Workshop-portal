@@ -32,6 +32,7 @@ import {
 } from "react-router-dom";
 import { api, clearSession, hasSession, saveSession } from "./api";
 import type { ApplicationStatus, Booking, GarageProfile, QuoteDraft } from "./types";
+import smrFavicon from "./assets/smart-mobility-roadcare-favicon.png";
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: "Needs a quote",
@@ -161,7 +162,7 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
   return (
     <main className="auth-page">
       <section className="auth-brand-panel">
-        <Link className="brand brand-light" to="/login"><span className="brand-mark"><Wrench size={21} /></span><span>SMR <small>WORKSHOP PORTAL</small></span></Link>
+        <Link className="brand brand-light" to="/login"><BrandLabel /></Link>
         <div className="auth-brand-copy">
           <span className="eyebrow eyebrow-light">SMART MOBILITY ROADCARE</span>
           <h1>Good work deserves a better way to run.</h1>
@@ -170,7 +171,7 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
         <div className="brand-footnote"><ShieldCheck size={16} /> Access is provided to ROSAF-approved workshops.</div>
       </section>
       <section className="auth-form-panel">
-        <div className="mobile-brand"><Link className="brand" to="/login"><span className="brand-mark"><Wrench size={21} /></span><span>SMR <small>WORKSHOP PORTAL</small></span></Link></div>
+        <div className="mobile-brand"><Link className="brand" to="/login"><BrandLabel /></Link></div>
         <div className="auth-form-wrap">
           <span className="eyebrow">WORKSHOP ACCESS</span>
           <h2>Welcome back</h2>
@@ -262,7 +263,7 @@ function SetPasswordPage() {
 function AuthSimplePage({ children }: { children: React.ReactNode }) {
   return (
     <main className="simple-auth-page">
-      <Link className="brand" to="/login"><span className="brand-mark"><Wrench size={21} /></span><span>SMR <small>WORKSHOP PORTAL</small></span></Link>
+      <Link className="brand" to="/login"><BrandLabel /></Link>
       <section className="simple-auth-card">{children}</section>
       <p className="muted auth-footer">Smart Mobility Roadcare · Malawi</p>
     </main>
@@ -506,7 +507,7 @@ function RegistrationPage() {
 
   return <div className="registration-page">
     <header className="registration-topbar">
-      <Link className="brand" to="/login"><span className="brand-mark"><Wrench size={21} /></span><span>SMR <small>WORKSHOP PORTAL</small></span></Link>
+      <Link className="brand" to="/login"><BrandLabel /></Link>
       <Link className="back-link" to="/login"><ArrowLeft size={15} /> Already approved? Sign in</Link>
     </header>
     <main className="registration-content">
@@ -644,7 +645,7 @@ function PortalLayout({
     <div className="portal-shell">
       {mobileOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
-        <Link className="brand brand-light sidebar-brand" to="/bookings"><span className="brand-mark"><Wrench size={21} /></span><span>SMR <small>WORKSHOP PORTAL</small></span></Link>
+        <Link className="brand brand-light sidebar-brand" to="/bookings"><BrandLabel /></Link>
         <div className="sidebar-label">WORKSPACE</div>
         <nav className="side-nav">
           <NavLink to="/bookings" onClick={() => setMobileOpen(false)}><LayoutDashboard size={18} /> Overview</NavLink>
@@ -713,10 +714,10 @@ function BookingsPage() {
         <button className="button button-outline" onClick={() => setRefreshKey((value) => value + 1)}><Activity size={16} /> Refresh</button>
       </div>
       <div className="stat-grid">
-        <StatCard label="Open requests" value={loading ? "—" : counts.open} icon={<ArrowDownLeft size={18} />} tone="orange" />
-        <StatCard label="Active jobs" value={loading ? "—" : counts.active} icon={<Wrench size={18} />} tone="blue" />
-        <StatCard label="Completed" value={loading ? "—" : counts.completed} icon={<CheckCircle2 size={18} />} tone="green" />
-        <StatCard label="Total bookings" value={loading ? "—" : bookings.length} icon={<CalendarDays size={18} />} tone="violet" />
+        <StatCard label="Open in results" value={loading ? "—" : counts.open} icon={<ArrowDownLeft size={18} />} tone="orange" />
+        <StatCard label="Active in results" value={loading ? "—" : counts.active} icon={<Wrench size={18} />} tone="blue" />
+        <StatCard label="Completed in results" value={loading ? "—" : counts.completed} icon={<CheckCircle2 size={18} />} tone="green" />
+        <StatCard label="Bookings in results" value={loading ? "—" : bookings.length} icon={<CalendarDays size={18} />} tone="violet" />
       </div>
       <section className="panel">
         <div className="panel-heading">
@@ -1173,6 +1174,10 @@ function EmptyState({ icon, title, body, compact = false }: { icon: React.ReactN
 
 function LoadingState({ label }: { label: string }) {
   return <div className="loading-state"><span className="spinner spinner-dark" />{label}</div>;
+}
+
+function BrandLabel() {
+  return <><img className="brand-logo" src={smrFavicon} alt="" /><span className="brand-name">Smart Mobility <em>Roadcare</em><small>WORKSHOP PORTAL</small></span></>;
 }
 
 function serviceLabel(value: string) {

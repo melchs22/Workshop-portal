@@ -15,7 +15,7 @@ npm install
 cp .env.example .env
 ```
 
-Set `VITE_API_BASE_URL` in `.env` to the backend origin, without `/api`, for example `http://localhost:8000`. Start the portal with:
+For local development, set `VITE_API_BASE_URL` in `.env` to the backend origin without `/api`, for example `http://localhost:8000`. The production build defaults to the current site's `/api` route, so the portal can share the admin site's origin. Start the portal with:
 
 ```sh
 npm run dev
@@ -30,7 +30,7 @@ npm run build
 npm run preview
 ```
 
-The TypeScript project check runs as part of the production build. Configure `VITE_API_BASE_URL` at build time to point to the intended backend environment.
+The TypeScript project check runs as part of the production build. The Vite build uses `/workshop/` as its deployment base path.
 
 ## Portal capabilities
 
@@ -43,12 +43,23 @@ The TypeScript project check runs as part of the production build. Configure `VI
 
 The portal does not create workshop accounts directly, approve applications, issue member invoices independently, or simulate payment success. A workshop owner account can sign in only after backend approval and activation. Application submission is intentionally blocked until `VITE_WORKSHOP_TERMS_URL` points to the actual ROSAF partner-terms document; no legal terms have been fabricated.
 
-## Deployment and API setup
+The login client falls back to the existing generic `/api/login/` route only when `/api/login/workshop/` returns `404`, then still requires the returned account role to be `WORKSHOP` and approved. Application status similarly tries the current GET contract before the earlier POST status route.
 
-1. Apply the backend's workshop migration in the target database and verify the workshop APIs there.
-2. Set `VITE_API_BASE_URL` to the backend's HTTPS origin and `VITE_WORKSHOP_TERMS_URL` to the approved public partner-terms document in the production build environment.
-3. Set `WORKSHOP_PORTAL_ORIGIN` in the backend environment to the exact deployed portal origin, then restart the backend.
-4. Serve the built `dist/` directory from the chosen static host and configure it to return `index.html` for SPA routes.
-5. Test sign-in, application submission/status, booking isolation, booking actions, and profile updates against a non-production backend before launch.
+## Existing-server deployment layout
+
+The current server at `201.79.45.60` serves `smartmobilityroadcare.com` through Nginx. Nginx sends `/api/` to the backend on `127.0.0.1:8001` and other site requests to the existing frontend on `127.0.0.1:3000`. Deploy the portal as static files under `/workshop/` on that same HTTPS origin. This needs no extra listener, DNS name, TLS certificate, or cross-origin browser request:
+
+- Build `dist/` and place it at `/opt/smart-mobility/workshop-portal/dist/`.
+- Add an Nginx `/workshop/` static-file location with an SPA fallback to that directory's `index.html`; preserve the existing `/api/` proxy location.
+- Keep the API base unset in the production build so browser requests use `https://smartmobilityroadcare.com/api/`.
+- Reload Nginx only after `nginx -t` succeeds. Deployment and Nginx changes have not been performed by this repository.
+
+## Deployment and API readiness
+
+1. Deploy the backend workshop changes and apply the new garage migration in staging. The server inspection on 2026-10-30 found only garage migrations `0001` and `0002` applied; the running API does not expose workshop login, application-status, or workshop profile routes yet.
+2. Verify the backend migration and all portal routes in staging before exposing the UI; do not treat the current live registration endpoint as proof the complete portal API is deployed.
+3. Keep `VITE_API_BASE_URL` blank for the same-origin `/api/` proxy. Leave `VITE_WORKSHOP_TERMS_URL` unset until ROSAF publishes the approved partner-terms document; application submission intentionally stays disabled meanwhile.
+4. Serve the built `dist/` directory under `/workshop/` and configure Nginx to fall back to `index.html` for portal routes.
+5. Test workshop login, application submission/status, booking isolation, booking actions, and profile updates against staging before launch. The production API cannot yet complete these checks because its workshop backend update is pending.
 
 Backend contract reference: `../vehix-backend/garages/API_DOCUMENTATION.md`.

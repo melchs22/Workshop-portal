@@ -1,6 +1,9 @@
 import type { LoginResponse } from "./types";
 
-const API_ORIGIN = import.meta.env.VITE_API_BASE_URL?.replace(/\/+$/, "");
+const API_ORIGIN = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? window.location.origin : "http://localhost:8000")
+).replace(/\/+$/, "");
 const ACCESS_KEY = "smr-workshop-access";
 const REFRESH_KEY = "smr-workshop-refresh";
 
@@ -92,12 +95,15 @@ export const api = {
       submission_completeness: string;
       registration_date: string;
     }>("garages/register/", { method: "POST", body: payload }, false),
-  login: (username: string, password: string) =>
-    request<LoginResponse>(
-      "login/workshop/",
-      { method: "POST", body: JSON.stringify({ username, password }) },
-      false,
-    ),
+  login: async (username: string, password: string) => {
+    const options = { method: "POST", body: JSON.stringify({ username, password }) };
+    try {
+      return await request<LoginResponse>("login/workshop/", options, false);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      return request<LoginResponse>("login/", options, false);
+    }
+  },
   setPassword: (email: string, code: string, newPassword: string) =>
     request<{ message: string }>(
       "auth/password-reset/confirm/",
@@ -162,10 +168,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  getApplicationStatus: (trackingId: string) =>
-    request<import("./types").ApplicationStatus>(
-      `garages/application-status/?tracking_id=${encodeURIComponent(trackingId)}`,
-      {},
-      false,
-    ),
+  getApplicationStatus: async (trackingId: string) => {
+    try {
+      return await request<import("./types").ApplicationStatus>(
+        `garages/application-status/?tracking_id=${encodeURIComponent(trackingId)}`,
+        {},
+        false,
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      return request<import("./types").ApplicationStatus>(
+        "garages/check-status/",
+        {
+          method: "POST",
+          body: JSON.stringify({ application_tracking_id: trackingId }),
+        },
+        false,
+      );
+    }
+  },
 };
