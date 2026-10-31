@@ -16,11 +16,11 @@ npm run build
 test -s dist/index.html
 
 if [ "${DEPLOY_LOCAL:-0}" = "1" ]; then
- rsync -az --delete dist/ /opt/smart-mobility/workshop-portal/dist/
+ rsync -azO --delete dist/ /opt/smart-mobility/workshop-portal/dist/
  bash "$ROOT_DIR/scripts/deploy-server.sh"
 else
  REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
- rsync -az --delete \
+ rsync -azO --delete \
    --rsync-path="runuser -u smartmobility -- rsync" \
    -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" \
    dist/ "${REMOTE}:/opt/smart-mobility/workshop-portal/dist/"
