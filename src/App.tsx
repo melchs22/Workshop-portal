@@ -326,13 +326,14 @@ const SERVICE_OPTIONS = [
 ];
 const DAY_OPTIONS = [["monday", "Mon"], ["tuesday", "Tue"], ["wednesday", "Wed"], ["thursday", "Thu"], ["friday", "Fri"], ["saturday", "Sat"], ["sunday", "Sun"]];
 const WORKSHOP_TERMS_URL = (() => {
-  const configuredUrl = import.meta.env.VITE_WORKSHOP_TERMS_URL;
-  if (!configuredUrl) return "";
+  const defaultUrl = "https://smartmobilityroadcare.com/terms-and-conditions";
+  const configuredUrl = import.meta.env.VITE_WORKSHOP_TERMS_URL?.trim();
+  if (!configuredUrl) return defaultUrl;
   try {
     const url = new URL(configuredUrl);
-    return url.protocol === "https:" ? url.href : "";
+    return url.protocol === "https:" ? url.href : defaultUrl;
   } catch {
-    return "";
+    return defaultUrl;
   }
 })();
 
@@ -359,7 +360,6 @@ type RegistrationData = {
   tin_tax_id: string;
   vehicle_types: string[];
   services_offered: string[];
-  pricing_info: string;
   is_price_negotiable: boolean;
   mechanics_count: string;
   lead_mechanic_name: string;
@@ -380,13 +380,18 @@ type RegistrationData = {
   terms_accepted: boolean;
 };
 
+type PricingItem = {
+  service: string;
+  price: string;
+};
+
 const INITIAL_REGISTRATION: RegistrationData = {
   name: "", garage_type: "INDIVIDUAL", years_in_operation: "", physical_address: "",
   latitude: "", longitude: "", operating_hours: Object.fromEntries(DAY_OPTIONS.map(([day]) => [day, "Closed"])),
   primary_phone: "", secondary_phone: "", business_email: "", owner_name: "",
   owner_national_id: "", owner_phone: "", owner_email: "", emergency_contact_name: "",
   emergency_contact_phone: "", manager_name: "", manager_phone: "", manager_email: "",
-  tin_tax_id: "", vehicle_types: [], services_offered: [], pricing_info: "{}",
+  tin_tax_id: "", vehicle_types: [], services_offered: [],
   is_price_negotiable: false, mechanics_count: "1", lead_mechanic_name: "",
   experience_years: "", certifications: "", specialized_skills: "",
   warranty_offered: false, warranty_duration_days: "", avg_turnaround_hours: "24",
@@ -395,12 +400,47 @@ const INITIAL_REGISTRATION: RegistrationData = {
   provider_name: "", settlement_preference: "WEEKLY", terms_accepted: false,
 };
 
+function pricingInfoFrom(value: GarageProfile["pricing_info"]): PricingItem[] {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error("Saved typical pricing could not be read. Contact support before changing your profile.");
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Saved typical pricing has an unsupported format. Contact support before changing your profile.");
+  }
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  const items = entries.map(([service, price]) => {
+    if (typeof price !== "string" && typeof price !== "number") {
+      throw new Error("Saved typical pricing has an unsupported format. Contact support before changing your profile.");
+    }
+    return { service, price: String(price) };
+  });
+  return items.length ? items : [{ service: "", price: "" }];
+}
+
+function pricingInfoFromItems(items: PricingItem[]) {
+  if (items.some((item) => Boolean(item.service.trim()) !== Boolean(item.price.trim()))) return null;
+  const services = items.map((item) => item.service.trim().toLocaleLowerCase()).filter(Boolean);
+  if (new Set(services).size !== services.length) return null;
+  return Object.fromEntries(
+    items
+      .filter((item) => item.service.trim() && item.price.trim())
+      .map((item) => [item.service.trim(), item.price.trim()]),
+  );
+}
+
 function RegistrationPage() {
   const [form, setForm] = useState<RegistrationData>(INITIAL_REGISTRATION);
   const [files, setFiles] = useState<Record<string, File | null>>({});
+  const [pricingItems, setPricingItems] = useState<PricingItem[]>([{ service: "", price: "" }]);
   const [trackingId, setTrackingId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
   function setField<K extends keyof RegistrationData>(key: K, value: RegistrationData[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -415,7 +455,7 @@ function RegistrationPage() {
     setForm((current) => ({ ...current, operating_hours: { ...current.operating_hours, [day]: value } }));
   }
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
+  function reviewApplication(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     if (!form.working_days.length || !form.vehicle_types.length || !form.services_offered.length) {
@@ -436,15 +476,28 @@ function RegistrationPage() {
       return;
     }
 
-    let pricing: unknown;
-    try {
-      pricing = JSON.parse(form.pricing_info);
-      if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) throw new Error();
-    } catch {
-      setError("Pricing information must be a valid JSON object.");
+    if (!pricingInfoFromItems(pricingItems)) {
+      const incomplete = pricingItems.some((item) => Boolean(item.service.trim()) !== Boolean(item.price.trim()));
+      setError(incomplete
+        ? "Complete both the service and typical price for each pricing line, or remove the empty line."
+        : "Each typical pricing service must be listed only once.");
       return;
     }
 
+    setReviewing(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function submitApplication() {
+    setError("");
+    const exterior = files.exterior_photo;
+    const interior = files.interior_workshop_photo;
+    if (!exterior || !interior) {
+      setError("Upload both a workshop exterior photo and an interior workshop photo.");
+      setReviewing(false);
+      return;
+    }
+    const pricing = pricingInfoFromItems(pricingItems) ?? {};
     const payload = new FormData();
     const scalarFields: Array<keyof RegistrationData> = [
       "name", "garage_type", "years_in_operation", "physical_address", "primary_phone",
@@ -505,6 +558,18 @@ function RegistrationPage() {
     </AuthSimplePage>;
   }
 
+  if (reviewing) {
+    return <RegistrationReviewPage
+      form={form}
+      files={files}
+      pricingItems={pricingItems.filter((item) => item.service.trim() && item.price.trim())}
+      error={error}
+      busy={busy}
+      onEdit={() => { setReviewing(false); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+      onSubmit={submitApplication}
+    />;
+  }
+
   return <div className="registration-page">
     <header className="registration-topbar">
       <Link className="brand" to="/login"><BrandLabel /></Link>
@@ -513,7 +578,7 @@ function RegistrationPage() {
     <main className="registration-content">
       <div className="page-heading"><div><span className="eyebrow">ROSAF SERVICE CENTRE NETWORK</span><h1>Apply to become an approved workshop</h1><p>Share your service centre details. ROSAF reviews each application before enabling portal access.</p></div></div>
       {error && <ErrorBanner message={error} />}
-      <form className="page-stack" onSubmit={submit}>
+      <form className="page-stack" onSubmit={reviewApplication}>
         <section className="panel">
           <div className="panel-heading"><div><h2>1. Workshop details</h2><p>Business identity, location, and contact information.</p></div><div className="icon-tile"><Building2 size={18} /></div></div>
           <div className="form-grid">
@@ -537,14 +602,14 @@ function RegistrationPage() {
             <label className="field"><span>Owner email</span><input type="email" value={form.owner_email} onChange={(event) => setField("owner_email", event.target.value)} required /></label>
             <label className="field"><span>Emergency contact name <small>optional</small></span><input value={form.emergency_contact_name} onChange={(event) => setField("emergency_contact_name", event.target.value)} /></label>
             <label className="field"><span>Emergency contact phone <small>optional</small></span><input type="tel" value={form.emergency_contact_phone} onChange={(event) => setField("emergency_contact_phone", event.target.value)} /></label>
-            <FileField label="Workshop exterior photo" required onChange={(file) => setFiles((current) => ({ ...current, exterior_photo: file }))} accept="image/*" />
-            <FileField label="Workshop interior photo" required onChange={(file) => setFiles((current) => ({ ...current, interior_workshop_photo: file }))} accept="image/*" />
-            <FileField label="Owner ID front <optional>" onChange={(file) => setFiles((current) => ({ ...current, owner_id_front: file }))} accept="image/*" />
-            <FileField label="Owner ID back <optional>" onChange={(file) => setFiles((current) => ({ ...current, owner_id_back: file }))} accept="image/*" />
-            <FileField label="Business registration certificate <optional>" onChange={(file) => setFiles((current) => ({ ...current, business_registration_cert: file }))} />
-            <FileField label="Trading licence <optional>" onChange={(file) => setFiles((current) => ({ ...current, trading_license: file }))} />
-            <FileField label="Local authority letter <optional>" onChange={(file) => setFiles((current) => ({ ...current, local_authority_letter: file }))} />
-            <FileField label="Tools & equipment photo <optional>" onChange={(file) => setFiles((current) => ({ ...current, tools_equipment_photo: file }))} accept="image/*" />
+            <FileField label="Workshop exterior photo" required file={files.exterior_photo} onChange={(file) => setFiles((current) => ({ ...current, exterior_photo: file }))} accept="image/*" />
+            <FileField label="Workshop interior photo" required file={files.interior_workshop_photo} onChange={(file) => setFiles((current) => ({ ...current, interior_workshop_photo: file }))} accept="image/*" />
+            <FileField label="Owner ID front <optional>" file={files.owner_id_front} onChange={(file) => setFiles((current) => ({ ...current, owner_id_front: file }))} accept="image/*" />
+            <FileField label="Owner ID back <optional>" file={files.owner_id_back} onChange={(file) => setFiles((current) => ({ ...current, owner_id_back: file }))} accept="image/*" />
+            <FileField label="Business registration certificate <optional>" file={files.business_registration_cert} onChange={(file) => setFiles((current) => ({ ...current, business_registration_cert: file }))} />
+            <FileField label="Trading licence <optional>" file={files.trading_license} onChange={(file) => setFiles((current) => ({ ...current, trading_license: file }))} />
+            <FileField label="Local authority letter <optional>" file={files.local_authority_letter} onChange={(file) => setFiles((current) => ({ ...current, local_authority_letter: file }))} />
+            <FileField label="Tools & equipment photo <optional>" file={files.tools_equipment_photo} onChange={(file) => setFiles((current) => ({ ...current, tools_equipment_photo: file }))} accept="image/*" />
             <label className="field"><span>Manager name <small>optional</small></span><input value={form.manager_name} onChange={(event) => setField("manager_name", event.target.value)} /></label>
             <label className="field"><span>Manager phone <small>optional</small></span><input type="tel" value={form.manager_phone} onChange={(event) => setField("manager_phone", event.target.value)} /></label>
             <label className="field"><span>Manager email <small>optional</small></span><input type="email" value={form.manager_email} onChange={(event) => setField("manager_email", event.target.value)} /></label>
@@ -569,7 +634,7 @@ function RegistrationPage() {
             const enabled = form.working_days.includes(day);
             return <label className="hours-field" key={day}><span>{label}</span><input aria-label={`${label} opening hours`} disabled={!enabled} required={enabled} type="time" value={opening} onChange={(event) => setHours(day, `${event.target.value}-${closing}`)} /><i>to</i><input aria-label={`${label} closing hours`} disabled={!enabled} required={enabled} type="time" value={closing} onChange={(event) => setHours(day, `${opening}-${event.target.value}`)} /></label>;
           })}</div>
-          <label className="field json-editor"><span>Typical pricing <small>JSON object, e.g. {"{"}"Oil change": "MWK 25,000"{"}"}</small></span><textarea rows={4} spellCheck={false} value={form.pricing_info} onChange={(event) => setField("pricing_info", event.target.value)} required /></label>
+          <PricingEditor items={pricingItems} onChange={setPricingItems} />
           <div className="toggle-grid">
             <ToggleField label="Prices are negotiable" checked={form.is_price_negotiable} onChange={(value) => setField("is_price_negotiable", value)} />
             <ToggleField label="Emergency service" checked={form.emergency_service_available} onChange={(value) => setField("emergency_service_available", value)} />
@@ -587,17 +652,164 @@ function RegistrationPage() {
             <label className="field"><span>Settlement preference</span><select value={form.settlement_preference} onChange={(event) => setField("settlement_preference", event.target.value)}><option value="WEEKLY">Weekly</option><option value="DAILY">Daily</option></select></label>
             <label className="field field-span"><span>Cancellation policy</span><textarea rows={3} value={form.cancellation_policy} onChange={(event) => setField("cancellation_policy", event.target.value)} required /></label>
           </div>
-          <label className={`terms-check ${!WORKSHOP_TERMS_URL ? "terms-unavailable" : ""}`}><input type="checkbox" checked={form.terms_accepted} onChange={(event) => setField("terms_accepted", event.target.checked)} disabled={!WORKSHOP_TERMS_URL} required /><span>I confirm these details are accurate and agree to the <a href={WORKSHOP_TERMS_URL || undefined} target="_blank" rel="noreferrer">ROSAF service-centre partner terms</a>.{!WORKSHOP_TERMS_URL && <small>Applications cannot be submitted until ROSAF provides a terms URL.</small>}</span></label>
+          <label className="terms-check"><input type="checkbox" checked={form.terms_accepted} onChange={(event) => setField("terms_accepted", event.target.checked)} required /><span>I confirm these details are accurate and agree to the <a href={WORKSHOP_TERMS_URL} target="_blank" rel="noreferrer">Smart Mobility Roadcare Terms & Conditions</a>, including the terms for roadside assistance and service-centre partners.</span></label>
         </section>
-        <div className="form-submit-row"><span><ShieldCheck size={15} /> Your application is reviewed before workshop access is activated.</span><button className="button button-primary" disabled={busy || !form.terms_accepted || !WORKSHOP_TERMS_URL}>{busy ? "Submitting application…" : "Submit application"} <ArrowRight size={16} /></button></div>
+        <div className="form-submit-row"><span><ShieldCheck size={15} /> Check every detail before sending your application.</span><button className="button button-primary" disabled={!form.terms_accepted}>Review application <ArrowRight size={16} /></button></div>
       </form>
     </main>
   </div>;
 }
 
-function FileField({ label, required = false, accept, onChange }: { label: string; required?: boolean; accept?: string; onChange: (file: File | null) => void }) {
-  const [filename, setFilename] = useState("");
-  return <label className="field file-field"><span>{label.replace(" <optional>", "")} {required && <b>*</b>}</span><input type="file" accept={accept} required={required} onChange={(event) => { const file = event.target.files?.[0] ?? null; setFilename(file?.name ?? ""); onChange(file); }} /><small>{filename || (required ? "Required upload" : "Optional upload")}</small></label>;
+function FileField({ label, required = false, accept, file, onChange }: { label: string; required?: boolean; accept?: string; file?: File | null; onChange: (file: File | null) => void }) {
+  const previewUrl = useObjectUrl(file?.type.startsWith("image/") ? file : null);
+  return <label className="field file-field"><span>{label.replace(" <optional>", "")} {required && <b>*</b>}</span><input type="file" accept={accept} aria-required={required} onChange={(event) => onChange(event.target.files?.[0] ?? null)} /><small>{file?.name ?? (required ? "Required upload" : "Optional upload")}</small>{previewUrl && <img className="file-image-preview" src={previewUrl} alt={`${label.replace(" <optional>", "")} preview`} />}</label>;
+}
+
+function useObjectUrl(file: File | null) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    if (!file) {
+      setUrl("");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  return url;
+}
+
+function PricingEditor({ items, onChange }: { items: PricingItem[]; onChange: React.Dispatch<React.SetStateAction<PricingItem[]>> }) {
+  return <div className="pricing-editor field-spaced">
+    <div className="pricing-editor-heading">
+      <div><strong>Typical pricing</strong><p>Add common services and their usual prices. Leave blank if all work is quoted individually.</p></div>
+      <span>Prices in MWK</span>
+    </div>
+    <div className="pricing-editor-list">
+      {items.map((item, index) => <div className="pricing-input-row" key={index}>
+        <label className="field"><span>Service</span><input value={item.service} placeholder="e.g. Routine servicing" onChange={(event) => onChange((current) => current.map((entry, row) => row === index ? { ...entry, service: event.target.value } : entry))} /></label>
+        <label className="field"><span>Typical price</span><input value={item.price} placeholder="e.g. 25,000" onChange={(event) => onChange((current) => current.map((entry, row) => row === index ? { ...entry, price: event.target.value } : entry))} /></label>
+        <button className="icon-button pricing-remove" type="button" aria-label={`Remove pricing line ${index + 1}`} onClick={() => onChange((current) => current.filter((_, row) => row !== index))}><X size={15} /></button>
+      </div>)}
+    </div>
+    <button className="text-button add-line" type="button" onClick={() => onChange((current) => [...current, { service: "", price: "" }])}>+ Add a service price</button>
+  </div>;
+}
+
+function RegistrationReviewPage({ form, files, pricingItems, error, busy, onEdit, onSubmit }: {
+  form: RegistrationData;
+  files: Record<string, File | null>;
+  pricingItems: PricingItem[];
+  error: string;
+  busy: boolean;
+  onEdit: () => void;
+  onSubmit: () => void;
+}) {
+  const photos = [
+    ["Workshop exterior", files.exterior_photo],
+    ["Workshop interior", files.interior_workshop_photo],
+    ["Tools & equipment", files.tools_equipment_photo],
+  ] as const;
+  const documents = [
+    ["Owner ID front", files.owner_id_front],
+    ["Owner ID back", files.owner_id_back],
+    ["Business registration certificate", files.business_registration_cert],
+    ["Trading licence", files.trading_license],
+    ["Local authority letter", files.local_authority_letter],
+  ] as const;
+  const selectedDays = DAY_OPTIONS.filter(([day]) => form.working_days.includes(day));
+  const typeLabel = form.garage_type === "INDIVIDUAL" ? "Individual / informal" : "Registered business";
+
+  return <div className="registration-page">
+    <header className="registration-topbar">
+      <Link className="brand" to="/login"><BrandLabel /></Link>
+      <button className="back-link review-edit-top" type="button" onClick={onEdit}><ArrowLeft size={15} /> Edit application</button>
+    </header>
+    <main className="registration-content review-content-page">
+      <div className="page-heading"><div><span className="eyebrow">APPLICATION CHECK</span><h1>Review your application</h1><p>Check that your workshop details, service prices, and photos are accurate before sending them for review.</p></div></div>
+      {error && <ErrorBanner message={error} />}
+      <section className="panel review-panel">
+        <div className="panel-heading"><div><h2>Workshop details</h2><p>Business identity, location, and main contact information.</p></div><div className="icon-tile"><Building2 size={18} /></div></div>
+        <div className="review-detail-grid">
+          <ReviewField label="Service centre name" value={form.name} />
+          <ReviewField label="Business type" value={typeLabel} />
+          <ReviewField label="Years in operation" value={form.years_in_operation} />
+          <ReviewField label="Business email" value={form.business_email} />
+          <ReviewField label="Primary phone" value={form.primary_phone} />
+          <ReviewField label="Secondary phone" value={form.secondary_phone} />
+          <ReviewField label="Physical address" value={form.physical_address} wide />
+          <ReviewField label="Map coordinates" value={form.latitude && form.longitude ? `${form.latitude}, ${form.longitude}` : ""} />
+        </div>
+      </section>
+      <section className="panel review-panel">
+        <div className="panel-heading"><div><h2>Owner & contacts</h2><p>These details are used for application follow-up and account activation.</p></div><div className="icon-tile"><ShieldCheck size={18} /></div></div>
+        <div className="review-detail-grid">
+          <ReviewField label="Owner name" value={form.owner_name} />
+          <ReviewField label="National ID number" value={form.owner_national_id} />
+          <ReviewField label="Owner phone" value={form.owner_phone} />
+          <ReviewField label="Owner email" value={form.owner_email} />
+          <ReviewField label="Emergency contact" value={form.emergency_contact_name} />
+          <ReviewField label="Emergency contact phone" value={form.emergency_contact_phone} />
+          <ReviewField label="Manager name" value={form.manager_name} />
+          <ReviewField label="Manager phone" value={form.manager_phone} />
+          <ReviewField label="Manager email" value={form.manager_email} />
+          <ReviewField label="TIN / tax ID" value={form.tin_tax_id} />
+        </div>
+      </section>
+      <section className="panel review-panel">
+        <div className="panel-heading"><div><h2>Photos & supporting documents</h2><p>Confirm the images and files attached to this application.</p></div><div className="icon-tile"><FileCheck2 size={18} /></div></div>
+        <div className="review-photo-grid">{photos.map(([label, file]) => file && <ReviewPhoto key={label} label={label} file={file} />)}</div>
+        {documents.some(([, file]) => file) && <div className="review-document-list">{documents.map(([label, file]) => file && <div key={label}><FileCheck2 size={15} /><span>{label}</span><strong>{file.name}</strong></div>)}</div>}
+      </section>
+      <section className="panel review-panel">
+        <div className="panel-heading"><div><h2>Services, pricing & schedule</h2><p>What the workshop can service and when it is open.</p></div><div className="icon-tile"><Wrench size={18} /></div></div>
+        <div className="review-detail-grid">
+          <ReviewField label="Vehicles supported" value={form.vehicle_types.map((value) => VEHICLE_OPTIONS.find(([key]) => key === value)?.[1] ?? value).join(", ")} wide />
+          <ReviewField label="Services offered" value={form.services_offered.map((value) => SERVICE_OPTIONS.find(([key]) => key === value)?.[1] ?? value).join(", ")} wide />
+          <ReviewField label="Mechanics available" value={form.mechanics_count} />
+          <ReviewField label="Average turnaround" value={`${form.avg_turnaround_hours} hours`} />
+          <ReviewField label="Lead mechanic" value={form.lead_mechanic_name} />
+          <ReviewField label="Experience" value={form.experience_years ? `${form.experience_years} years` : ""} />
+          <ReviewField label="Certifications" value={form.certifications} />
+          <ReviewField label="Specialized skills" value={form.specialized_skills} />
+          <ReviewField label="Working days" value={selectedDays.map(([, label]) => label).join(", ")} />
+          <ReviewField label="Operating hours" value={selectedDays.map(([day, label]) => `${label}: ${form.operating_hours[day]}`).join(" · ")} wide />
+          <ReviewField label="Typical pricing" value={pricingItems.length ? "See service prices below" : "Prices provided on request"} wide />
+        </div>
+        {pricingItems.length > 0 && <div className="review-pricing-list">{pricingItems.map((item) => <div key={item.service}><span>{item.service}</span><strong>{item.price} MWK</strong></div>)}</div>}
+        <div className="review-flags">
+          <span>{form.is_price_negotiable ? "Prices are negotiable" : "Prices are fixed"}</span>
+          <span>{form.emergency_service_available ? "Emergency service available" : "No emergency service"}</span>
+          <span>{form.warranty_offered ? `Warranty offered${form.warranty_duration_days ? ` · ${form.warranty_duration_days} days` : ""}` : "No warranty offered"}</span>
+        </div>
+        <div className="review-note"><strong>Cancellation policy</strong><p>{form.cancellation_policy}</p></div>
+      </section>
+      <section className="panel review-panel">
+        <div className="panel-heading"><div><h2>Settlement & agreement</h2><p>Settlement details are shared only with authorized operations staff.</p></div><div className="icon-tile"><ShieldCheck size={18} /></div></div>
+        <div className="review-detail-grid">
+          <ReviewField label="Settlement method" value={form.payment_method === "MOBILE_MONEY" ? "Mobile money" : "Bank transfer"} />
+          <ReviewField label="Provider or bank" value={form.provider_name} />
+          <ReviewField label="Account holder" value={form.account_holder_name} />
+          <ReviewField label="Account number" value={form.account_number} />
+          <ReviewField label="Settlement frequency" value={form.settlement_preference === "WEEKLY" ? "Weekly" : "Daily"} />
+          <ReviewField label="Terms & conditions" value={form.terms_accepted ? "Accepted" : "Not accepted"} />
+        </div>
+      </section>
+      <div className="review-actions">
+        <button className="button button-outline" type="button" onClick={onEdit}><ArrowLeft size={15} /> Edit application</button>
+        <button className="button button-primary" type="button" disabled={busy} onClick={onSubmit}>{busy ? "Sending application…" : "Submit application"} <ArrowRight size={16} /></button>
+      </div>
+    </main>
+  </div>;
+}
+
+function ReviewField({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return <div className={`review-field${wide ? " review-field-wide" : ""}`}><span>{label}</span><strong>{value.trim() || "Not provided"}</strong></div>;
+}
+
+function ReviewPhoto({ label, file }: { label: string; file: File }) {
+  const previewUrl = useObjectUrl(file);
+  return <figure className="review-photo"><img src={previewUrl} alt={label} /><figcaption><strong>{label}</strong><span>{file.name}</span></figcaption></figure>;
 }
 
 function ApplicationCard({ application }: { application: ApplicationStatus }) {
@@ -1019,7 +1231,7 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 function ProfilePage({ profile, profileError, onRetryProfile, onProfileUpdated }: { profile: GarageProfile | null; profileError: string; onRetryProfile: () => void; onProfileUpdated: (profile: GarageProfile) => void }) {
   const [form, setForm] = useState<GarageProfile | null>(profile);
   const [hoursText, setHoursText] = useState("");
-  const [pricingText, setPricingText] = useState("");
+  const [pricingItems, setPricingItems] = useState<PricingItem[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1028,7 +1240,12 @@ function ProfilePage({ profile, profileError, onRetryProfile, onProfileUpdated }
     if (!profile) return;
     setForm(profile);
     setHoursText(JSON.stringify(profile.operating_hours, null, 2));
-    setPricingText(JSON.stringify(profile.pricing_info, null, 2));
+    try {
+      setPricingItems(pricingInfoFrom(profile.pricing_info));
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not read the saved typical pricing.");
+    }
   }, [profile]);
 
   function setField<K extends keyof GarageProfile>(key: K, value: GarageProfile[K]) {
@@ -1044,12 +1261,19 @@ function ProfilePage({ profile, profileError, onRetryProfile, onProfileUpdated }
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form) return;
+    const pricing_info = pricingInfoFromItems(pricingItems);
+    if (!pricing_info) {
+      const incomplete = pricingItems.some((item) => Boolean(item.service.trim()) !== Boolean(item.price.trim()));
+      setError(incomplete
+        ? "Complete both the service and typical price for each pricing line, or remove the empty line."
+        : "Each typical pricing service must be listed only once.");
+      return;
+    }
     setBusy(true);
     setError("");
     setSuccess("");
     try {
       const operating_hours = JSON.parse(hoursText) as Record<string, string>;
-      const pricing_info = JSON.parse(pricingText) as Record<string, unknown>;
       const updated = await api.updateProfile({
         name: form.name,
         physical_address: form.physical_address,
@@ -1125,7 +1349,7 @@ function ProfilePage({ profile, profileError, onRetryProfile, onProfileUpdated }
         </section>
         <section className="panel">
           <div className="panel-heading"><div><h2>Pricing & service policy</h2><p>Let members understand what your workshop normally charges and supports.</p></div><div className="icon-tile"><FileCheck2 size={18} /></div></div>
-          <label className="field json-editor"><span>Pricing information <small>Valid JSON object</small></span><textarea rows={5} spellCheck={false} value={pricingText} onChange={(event) => setPricingText(event.target.value)} required /></label>
+          <PricingEditor items={pricingItems} onChange={setPricingItems} />
           <label className="field field-spaced"><span>Specialized skills <small>optional</small></span><textarea rows={2} value={form.specialized_skills ?? ""} onChange={(event) => setField("specialized_skills", event.target.value || null)} /></label>
           <label className="field field-spaced"><span>Cancellation policy</span><textarea rows={3} value={form.cancellation_policy} onChange={(event) => setField("cancellation_policy", event.target.value)} required /></label>
         </section>

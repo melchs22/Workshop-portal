@@ -1,0 +1,28 @@
+name: Deploy workshop portal
+
+on:
+  push:
+    branches:
+      - feat/workshop-portal-mvp
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workshop-portal-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, smr-production]
+    if: github.ref == 'refs/heads/feat/workshop-portal-mvp'
+    environment: production
+    steps:
+      - name: Check out deployment commit
+        uses: actions/checkout@v4
+
+      - name: Build and deploy on the production runner
+        env:
+          DEPLOY_LOCAL: "1"
+        run: bash ./scripts/deploy-production.sh
